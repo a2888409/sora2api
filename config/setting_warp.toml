@@ -42,12 +42,5 @@ parse_method = "third_party"
 custom_parse_url = ""
 custom_parse_token = ""
 
-[video_length]
-default_length = "10s"
-
-[video_length.lengths]
-10s = 300
-15s = 450
-
 [token_refresh]
 at_auto_refresh_enabled = false

@@ -101,8 +101,17 @@ class DebugLogger:
             # Files
             if files:
                 self.logger.info("\n📎 Files:")
-                for key in files.keys():
-                    self.logger.info(f"  {key}: <file data>")
+                try:
+                    # Handle both dict and CurlMime objects
+                    if hasattr(files, 'keys') and callable(getattr(files, 'keys', None)):
+                        for key in files.keys():
+                            self.logger.info(f"  {key}: <file data>")
+                    else:
+                        # CurlMime or other non-dict objects
+                        self.logger.info("  <multipart form data>")
+                except (AttributeError, TypeError):
+                    # Fallback for objects that don't support iteration
+                    self.logger.info("  <binary file data>")
             
             # Proxy
             if proxy:

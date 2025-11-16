@@ -417,3 +417,198 @@ class SoraClient:
                 response_text=str(e)
             )
             raise
+
+    # ==================== Character Creation Methods ====================
+
+    async def upload_character_video(self, video_data: bytes, token: str) -> str:
+        """Upload character video and return cameo_id
+
+        Args:
+            video_data: Video file bytes
+            token: Access token
+
+        Returns:
+            cameo_id
+        """
+        mp = CurlMime()
+        mp.addpart(
+            name="file",
+            content_type="video/mp4",
+            filename="video.mp4",
+            data=video_data
+        )
+        mp.addpart(
+            name="timestamps",
+            data=b"0,3"
+        )
+
+        result = await self._make_request("POST", "/characters/upload", token, multipart=mp)
+        return result.get("id")
+
+    async def get_cameo_status(self, cameo_id: str, token: str) -> Dict[str, Any]:
+        """Get character (cameo) processing status
+
+        Args:
+            cameo_id: The cameo ID returned from upload_character_video
+            token: Access token
+
+        Returns:
+            Dictionary with status, display_name_hint, username_hint, profile_asset_url, instruction_set_hint
+        """
+        return await self._make_request("GET", f"/project_y/cameos/in_progress/{cameo_id}", token)
+
+    async def download_character_image(self, image_url: str) -> bytes:
+        """Download character image from URL
+
+        Args:
+            image_url: The profile_asset_url from cameo status
+
+        Returns:
+            Image file bytes
+        """
+        proxy_url = await self.proxy_manager.get_proxy_url()
+
+        kwargs = {
+            "timeout": self.timeout,
+            "impersonate": "chrome"
+        }
+
+        if proxy_url:
+            kwargs["proxy"] = proxy_url
+
+        async with AsyncSession() as session:
+            response = await session.get(image_url, **kwargs)
+            if response.status_code != 200:
+                raise Exception(f"Failed to download image: {response.status_code}")
+            return response.content
+
+    async def finalize_character(self, cameo_id: str, username: str, display_name: str,
+                                profile_asset_pointer: str, instruction_set, token: str) -> str:
+        """Finalize character creation
+
+        Args:
+            cameo_id: The cameo ID
+            username: Character username
+            display_name: Character display name
+            profile_asset_pointer: Asset pointer from upload_character_image
+            instruction_set: Character instruction set (not used by API, always set to None)
+            token: Access token
+
+        Returns:
+            character_id
+        """
+        # Note: API always expects instruction_set to be null
+        # The instruction_set parameter is kept for backward compatibility but not used
+        _ = instruction_set  # Suppress unused parameter warning
+        json_data = {
+            "cameo_id": cameo_id,
+            "username": username,
+            "display_name": display_name,
+            "profile_asset_pointer": profile_asset_pointer,
+            "instruction_set": None,
+            "safety_instruction_set": None
+        }
+
+        result = await self._make_request("POST", "/characters/finalize", token, json_data=json_data)
+        return result.get("character", {}).get("character_id")
+
+    async def set_character_public(self, cameo_id: str, token: str) -> bool:
+        """Set character as public
+
+        Args:
+            cameo_id: The cameo ID
+            token: Access token
+
+        Returns:
+            True if successful
+        """
+        json_data = {"visibility": "public"}
+        await self._make_request("POST", f"/project_y/cameos/by_id/{cameo_id}/update_v2", token, json_data=json_data)
+        return True
+
+    async def upload_character_image(self, image_data: bytes, token: str) -> str:
+        """Upload character image and return asset_pointer
+
+        Args:
+            image_data: Image file bytes
+            token: Access token
+
+        Returns:
+            asset_pointer
+        """
+        mp = CurlMime()
+        mp.addpart(
+            name="file",
+            content_type="image/webp",
+            filename="profile.webp",
+            data=image_data
+        )
+        mp.addpart(
+            name="use_case",
+            data=b"profile"
+        )
+
+        result = await self._make_request("POST", "/project_y/file/upload", token, multipart=mp)
+        return result.get("asset_pointer")
+
+    async def delete_character(self, character_id: str, token: str) -> bool:
+        """Delete a character
+
+        Args:
+            character_id: The character ID
+            token: Access token
+
+        Returns:
+            True if successful
+        """
+        proxy_url = await self.proxy_manager.get_proxy_url()
+
+        headers = {
+            "Authorization": f"Bearer {token}"
+        }
+
+        async with AsyncSession() as session:
+            url = f"{self.base_url}/project_y/characters/{character_id}"
+
+            kwargs = {
+                "headers": headers,
+                "timeout": self.timeout,
+                "impersonate": "chrome"
+            }
+
+            if proxy_url:
+                kwargs["proxy"] = proxy_url
+
+            response = await session.delete(url, **kwargs)
+            if response.status_code not in [200, 204]:
+                raise Exception(f"Failed to delete character: {response.status_code}")
+            return True
+
+    async def remix_video(self, remix_target_id: str, prompt: str, token: str,
+                         orientation: str = "portrait", n_frames: int = 450) -> str:
+        """Generate video using remix (based on existing video)
+
+        Args:
+            remix_target_id: The video ID from Sora share link (e.g., s_690d100857248191b679e6de12db840e)
+            prompt: Generation prompt
+            token: Access token
+            orientation: Video orientation (portrait/landscape)
+            n_frames: Number of frames
+
+        Returns:
+            task_id
+        """
+        json_data = {
+            "kind": "video",
+            "prompt": prompt,
+            "inpaint_items": [],
+            "remix_target_id": remix_target_id,
+            "cameo_ids": [],
+            "cameo_replacements": {},
+            "model": "sy_8",
+            "orientation": orientation,
+            "n_frames": n_frames
+        }
+
+        result = await self._make_request("POST", "/nf/create", token, json_data=json_data, add_sentinel_token=True)
+        return result.get("id")

@@ -4,6 +4,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from datetime import datetime
 from typing import List
 import json
+import re
 from ..core.auth import verify_api_key_header
 from ..core.models import ChatCompletionRequest
 from ..services.generation_handler import GenerationHandler, MODEL_CONFIG
@@ -17,6 +18,29 @@ def set_generation_handler(handler: GenerationHandler):
     """Set generation handler instance"""
     global generation_handler
     generation_handler = handler
+
+def _extract_remix_id(text: str) -> str:
+    """Extract remix ID from text
+
+    Supports two formats:
+    1. Full URL: https://sora.chatgpt.com/p/s_68e3a06dcd888191b150971da152c1f5
+    2. Short ID: s_68e3a06dcd888191b150971da152c1f5
+
+    Args:
+        text: Text to search for remix ID
+
+    Returns:
+        Remix ID (s_[a-f0-9]{32}) or empty string if not found
+    """
+    if not text:
+        return ""
+
+    # Match Sora share link format: s_[a-f0-9]{32}
+    match = re.search(r's_[a-f0-9]{32}', text)
+    if match:
+        return match.group(0)
+
+    return ""
 
 @router.get("/v1/models")
 async def list_models(api_key: str = Depends(verify_api_key_header)):
@@ -59,16 +83,24 @@ async def create_chat_completion(
         # Handle both string and array format (OpenAI multimodal)
         prompt = ""
         image_data = request.image  # Default to request.image if provided
+        video_data = request.video  # Video parameter
+        remix_target_id = request.remix_target_id  # Remix target ID
 
         if isinstance(content, str):
             # Simple string format
             prompt = content
+            # Extract remix_target_id from prompt if not already provided
+            if not remix_target_id:
+                remix_target_id = _extract_remix_id(prompt)
         elif isinstance(content, list):
             # Array format (OpenAI multimodal)
             for item in content:
                 if isinstance(item, dict):
                     if item.get("type") == "text":
                         prompt = item.get("text", "")
+                        # Extract remix_target_id from prompt if not already provided
+                        if not remix_target_id:
+                            remix_target_id = _extract_remix_id(prompt)
                     elif item.get("type") == "image_url":
                         # Extract base64 image from data URI
                         image_url = item.get("image_url", {})
@@ -79,16 +111,61 @@ async def create_chat_completion(
                                 image_data = url.split("base64,", 1)[1]
                             else:
                                 image_data = url
+                    elif item.get("type") == "input_video":
+                        # Extract video from input_video
+                        video_url = item.get("videoUrl", {})
+                        url = video_url.get("url", "")
+                        if url.startswith("data:video") or url.startswith("data:application"):
+                            # Extract base64 data from data URI
+                            if "base64," in url:
+                                video_data = url.split("base64,", 1)[1]
+                            else:
+                                video_data = url
+                        else:
+                            # It's a URL, pass it as-is (will be downloaded in generation_handler)
+                            video_data = url
         else:
             raise HTTPException(status_code=400, detail="Invalid content format")
-
-        if not prompt:
-            raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
         # Validate model
         if request.model not in MODEL_CONFIG:
             raise HTTPException(status_code=400, detail=f"Invalid model: {request.model}")
-        
+
+        # Check if this is a video model
+        model_config = MODEL_CONFIG[request.model]
+        is_video_model = model_config["type"] == "video"
+
+        # For video models with video parameter, we need streaming
+        if is_video_model and (video_data or remix_target_id):
+            if not request.stream:
+                # Non-streaming mode: only check availability
+                result = None
+                async for chunk in generation_handler.handle_generation(
+                    model=request.model,
+                    prompt=prompt,
+                    image=image_data,
+                    video=video_data,
+                    remix_target_id=remix_target_id,
+                    stream=False
+                ):
+                    result = chunk
+
+                if result:
+                    import json
+                    return JSONResponse(content=json.loads(result))
+                else:
+                    return JSONResponse(
+                        status_code=500,
+                        content={
+                            "error": {
+                                "message": "Availability check failed",
+                                "type": "server_error",
+                                "param": None,
+                                "code": None
+                            }
+                        }
+                    )
+
         # Handle streaming
         if request.stream:
             async def generate():
@@ -98,6 +175,8 @@ async def create_chat_completion(
                         model=request.model,
                         prompt=prompt,
                         image=image_data,
+                        video=video_data,
+                        remix_target_id=remix_target_id,
                         stream=True
                     ):
                         yield chunk
@@ -125,12 +204,14 @@ async def create_chat_completion(
                 }
             )
         else:
-            # Non-streaming response
+            # Non-streaming response (availability check only)
             result = None
             async for chunk in generation_handler.handle_generation(
                 model=request.model,
                 prompt=prompt,
                 image=image_data,
+                video=video_data,
+                remix_target_id=remix_target_id,
                 stream=False
             ):
                 result = chunk
@@ -144,7 +225,7 @@ async def create_chat_completion(
                     status_code=500,
                     content={
                         "error": {
-                            "message": "Generation failed",
+                            "message": "Availability check failed",
                             "type": "server_error",
                             "param": None,
                             "code": None

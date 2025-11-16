@@ -94,19 +94,19 @@ async def startup_event():
     # Initialize database tables
     await db.init_db()
 
-    # If first startup, initialize config from setting.toml
+    # Handle database initialization based on startup type
     if is_first_startup:
-        print("First startup detected. Initializing configuration from setting.toml...")
+        print("🎉 First startup detected. Initializing database and configuration from setting.toml...")
         config_dict = config.get_raw_config()
-        await db.init_config_from_toml(config_dict)
-        print("Configuration initialized successfully.")
+        await db.init_config_from_toml(config_dict, is_first_startup=True)
+        print("✓ Database and configuration initialized successfully.")
+    else:
+        print("🔄 Existing database detected. Checking for missing tables and columns...")
+        await db.check_and_migrate_db()
+        print("✓ Database migration check completed.")
 
     # Start file cache cleanup task
     await generation_handler.file_cache.start_cleanup_task()
-    print(f"Sora2API started on http://{config.server_host}:{config.server_port}")
-    print(f"API Key: {config.api_key}")
-    print(f"Admin: {config.admin_username} / {config.admin_password}")
-    print(f"Cache timeout: {config.cache_timeout}s")
 
 @app.on_event("shutdown")
 async def shutdown_event():

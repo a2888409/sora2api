@@ -116,9 +116,6 @@ class UpdateWatermarkFreeConfigRequest(BaseModel):
     custom_parse_url: Optional[str] = None
     custom_parse_token: Optional[str] = None
 
-class UpdateVideoLengthConfigRequest(BaseModel):
-    default_length: str  # "10s" or "15s"
-
 # Auth endpoints
 @router.post("/api/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
@@ -849,56 +846,6 @@ async def update_generation_timeout(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update generation timeout: {str(e)}")
-
-# Video length config endpoints
-@router.get("/api/video/length/config")
-async def get_video_length_config(token: str = Depends(verify_admin_token)):
-    """Get video length configuration"""
-    import json
-    try:
-        video_length_config = await db.get_video_length_config()
-        lengths = json.loads(video_length_config.lengths_json)
-        return {
-            "success": True,
-            "config": {
-                "default_length": video_length_config.default_length,
-                "lengths": lengths
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get video length config: {str(e)}")
-
-@router.post("/api/video/length/config")
-async def update_video_length_config(
-    request: UpdateVideoLengthConfigRequest,
-    token: str = Depends(verify_admin_token)
-):
-    """Update video length configuration"""
-    import json
-    try:
-        # Validate default_length
-        if request.default_length not in ["10s", "15s"]:
-            raise HTTPException(status_code=400, detail="default_length must be '10s' or '15s'")
-
-        # Fixed lengths mapping (not modifiable)
-        lengths = {"10s": 300, "15s": 450}
-        lengths_json = json.dumps(lengths)
-
-        # Update database
-        await db.update_video_length_config(request.default_length, lengths_json)
-
-        return {
-            "success": True,
-            "message": "Video length configuration updated",
-            "config": {
-                "default_length": request.default_length,
-                "lengths": lengths
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update video length config: {str(e)}")
 
 # AT auto refresh config endpoints
 @router.get("/api/token-refresh/config")

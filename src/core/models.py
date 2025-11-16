@@ -92,14 +92,6 @@ class WatermarkFreeConfig(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-class VideoLengthConfig(BaseModel):
-    """Video length configuration"""
-    id: int = 1
-    default_length: str = "10s"  # Default video length: "10s" or "15s"
-    lengths_json: str = '{"10s": 300, "15s": 450}'  # JSON mapping of length to n_frames
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
 # API Request/Response models
 class ChatMessage(BaseModel):
     role: str
@@ -109,7 +101,10 @@ class ChatCompletionRequest(BaseModel):
     model: str
     messages: List[ChatMessage]
     image: Optional[str] = None
-    stream: bool = True
+    video: Optional[str] = None  # Base64 encoded video file
+    remix_target_id: Optional[str] = None  # Sora share link video ID for remix
+    stream: bool = False
+    max_tokens: Optional[int] = None
 
 class ChatCompletionChoice(BaseModel):
     index: int
